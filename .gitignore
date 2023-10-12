@@ -1,0 +1,6 @@
+.env
+/.idea
+data
+db.db
+config.yml
+__pycache__
