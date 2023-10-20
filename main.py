@@ -1,47 +1,69 @@
+import datetime
 import os
 import boto3
-import sqlite3
-import pdftotext
 import yaml
-from utils import parse_hme, parse_jolt, parse_sales_summary, insert_hme, insert_jolt, insert_sales_summary
 from dotenv import load_dotenv
+from process import process_hme, process_jolt, process_sales, process_timecard, process_till_history
+
 load_dotenv()
 config = yaml.safe_load(open("config.yml"))
+files_to_process = config['files_to_process']
+data_dir = config['data_dir']
+yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+yesterday = yesterday.strftime("%Y-%m-%d")
 
-# Parse the webhook
-file_name = 'hme.pdf'
-local_path = os.path.join(os.getenv("DATA_DIR"), file_name)
 
-# Download the file from S3
-s3 = boto3.client('s3')
-s3.download_file(os.getenv("S3_BUCKET"), file_name, local_path)
+def download_s3_files(files, date, temp_storage_dir):
+    # Format the files to process
+    files = [f"{x['prefix']}-{date}.{x['extension']}" for x in files]
 
-# Open the file
-with open(local_path, "rb") as f:
-    pdf = pdftotext.PDF(f)
+    # Download each file
+    for file in files:
+        # Set a place to store the file temporarily
+        local_path = os.path.join(temp_storage_dir, file)
 
-# Parse the file
-parsed_file = None
-if 'hme' in file_name:
-    parsed_file = parse_hme(pdf)
-elif 'jolt' in file_name:
-    parsed_file = parse_jolt(pdf)
-elif 'sales' in file_name:
-    parsed_file = parse_sales_summary(pdf)
+        # Download the file from S3
+        # Todo: Add try catch block here
+        s3 = boto3.client('s3')
+        s3.download_file(os.getenv("S3_BUCKET"), file, local_path)
 
-# Connect to the database
-conn = sqlite3.connect('db.db')
-cursor = conn.cursor()
 
-if 'hme' in file_name:
-    insert_hme(parsed_file, cursor)
-elif 'jolt' in file_name:
-    insert_jolt(parsed_file, cursor)
-elif 'sales' in file_name:
-    insert_sales_summary(parsed_file, cursor)
+def process_downloaded_files(temp_storage_dir):
+    # get the file names from data_dir
+    downloads = os.listdir(temp_storage_dir)
 
-# Close the connection
-conn.commit()
+    # Process each file
+    for download in downloads:
 
-# Delete the pdf file
-os.remove(local_path)
+        # Set the path
+        download = os.path.join(temp_storage_dir, download)
+
+        # Open, parse and insert the values into the database
+        if 'hme' in download:
+            process_hme(download)
+        elif 'jolt' in download:
+            process_jolt(download)
+        elif 'sales' in download:
+            process_sales(download)
+        elif 'timecard' in download:
+            process_timecard(download)
+        elif 'till-history' in download:
+            process_till_history(download)
+
+
+def delete_downloaded_files(temp_storage_dir):
+    # get the file names from data_dir
+    downloads = os.listdir(temp_storage_dir)
+
+    # Delete each file
+    for download in downloads:
+        # Set the path
+        download = os.path.join(temp_storage_dir, download)
+        # Delete the file
+        os.remove(download)
+
+
+if __name__ == "__main__":
+    download_s3_files(files_to_process, yesterday, data_dir)
+    process_downloaded_files(data_dir)
+    delete_downloaded_files(data_dir)

@@ -11,7 +11,7 @@ load_dotenv()
 conn = sqlite3.connect('db.db')
 cursor = conn.cursor()
 cursor.execute('''
-SELECT * FROM sales_summary
+SELECT * FROM sales
 WHERE date >= datetime('now', '-36 hours')
 ''')
 rows = cursor.fetchall()

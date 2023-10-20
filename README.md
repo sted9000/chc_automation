@@ -35,7 +35,9 @@ DATA_DIR='<DIRECTORY_TO_STORE_DATA_BEING_PARSED>
 ```
 
 ## TODO
-- [ ] Add webhook
-- [ ] Set up Raspberry Pi
-- [ ] Set up cron job
-- [ ] Test
+- [x] Add store reference to hme files
+- [x] Add parse timecard
+- [x] Add parse till-history
+- [ ] Update fetch and send with all files
+- [ ] Update format_html with all files
+- [ ] Update README
