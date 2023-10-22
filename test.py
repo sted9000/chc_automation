@@ -1,6 +1,11 @@
-from process import process_timecard, process_till_history
+import datetime
 
-download = './data/till-history-2023-10-18.pdf'
+from process import process_timecard, process_till_history, process_sales
+
+download = './data/timecard-2023-10-19.pdf'
 # extract the store from the download string
 
-process_till_history(download)
+yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+yesterday = yesterday.strftime("%Y-%m-%d")
+
+process_timecard(download, yesterday)

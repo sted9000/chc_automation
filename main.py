@@ -4,6 +4,7 @@ import boto3
 import yaml
 from dotenv import load_dotenv
 from process import process_hme, process_jolt, process_sales, process_timecard, process_till_history
+from utils import create_database
 
 load_dotenv()
 config = yaml.safe_load(open("config.yml"))
@@ -15,10 +16,11 @@ yesterday = yesterday.strftime("%Y-%m-%d")
 
 def download_s3_files(files, date, temp_storage_dir):
     # Format the files to process
-    files = [f"{x['prefix']}-{date}.{x['extension']}" for x in files]
+    files = [f"{x['prefix']}-{date}{x['extension']}" for x in files]
 
     # Download each file
     for file in files:
+        print(f'Downloading {file}')
         # Set a place to store the file temporarily
         local_path = os.path.join(temp_storage_dir, file)
 
@@ -26,6 +28,13 @@ def download_s3_files(files, date, temp_storage_dir):
         # Todo: Add try catch block here
         s3 = boto3.client('s3')
         s3.download_file(os.getenv("S3_BUCKET"), file, local_path)
+
+
+def check_db(db_path):
+    # Check if the database exists
+    if not os.path.exists(db_path):
+        # Create the database
+        create_database()
 
 
 def process_downloaded_files(temp_storage_dir):
@@ -40,15 +49,15 @@ def process_downloaded_files(temp_storage_dir):
 
         # Open, parse and insert the values into the database
         if 'hme' in download:
-            process_hme(download)
+            process_hme(download, yesterday)
         elif 'jolt' in download:
-            process_jolt(download)
+            process_jolt(download, yesterday)
         elif 'sales' in download:
-            process_sales(download)
+            process_sales(download, yesterday)
         elif 'timecard' in download:
-            process_timecard(download)
+            process_timecard(download, yesterday)
         elif 'till-history' in download:
-            process_till_history(download)
+            process_till_history(download, yesterday)
 
 
 def delete_downloaded_files(temp_storage_dir):
@@ -64,6 +73,8 @@ def delete_downloaded_files(temp_storage_dir):
 
 
 if __name__ == "__main__":
-    download_s3_files(files_to_process, yesterday, data_dir)
+    # download_s3_files(files_to_process, yesterday, data_dir)
+    check_db('db.db')
     process_downloaded_files(data_dir)
-    delete_downloaded_files(data_dir)
+    # delete_downloaded_files(data_dir)
+    pass

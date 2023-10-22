@@ -23,18 +23,34 @@ def find_customer_count(text):
         return int(match.group(1))
 
 
-def find_store(text):
-    # todo: add regex to find the store name in the example string below
-    text = text.replace('\n', ' ')
-
-    # import the store id from the config file
-    store_id = yaml.safe_load(open("config.yml"))["store_id"]
-    for key, value in store_id.items():
-        if value in text.split('-')[0]:
-            return key
+def find_labor(text):
+    # regular expression to find the customer count in the example string below
+    #  $23.52  Labor Percent:  30.09%  - Promotions  $45.48
+    pattern = r"Labor Percent:\s+([\d.]+)%"
+    match = re.search(pattern, text)
+    if match:
+        return float(match.group(1))
 
 
-def find_late_clock_out_times(text):
+def find_sales_labor(text):
+    # regular expression to find the customer count in the example string below
+    # Percent:  30.09%  - Promotions  $45.48  Sales Per Labor Hour:  $48.47  - Gift Card
+    pattern = r"Sales Per Labor Hour:\s+\$([\d.]+)"
+    match = re.search(pattern, text)
+    if match:
+        return float(match.group(1))
+
+
+def find_donation_count(text):
+    # regular expression to find the customer count in the example string below
+    # $0.00  Donation Count:  80  Donation Total:  $39.70
+    pattern = r"Donation Count:\s+(\d+)"
+    match = re.search(pattern, text)
+    if match:
+        return int(match.group(1))
+
+
+def find_clock_out_times(text):
     text = text.replace('\n', ' ')
     # All text after 'Date'
     text = text.split('Date')[1]
@@ -44,16 +60,29 @@ def find_late_clock_out_times(text):
     match = re.findall(pattern, text)
     if match:
         # list of only the odd indexes
-        clock_out = match[1::2]
-        # see if any of the times are after 11:00 AM
-        for time in clock_out:
-            # convert the time to time object
-            time = datetime.datetime.strptime(time, '%I:%M %p').time()
-            # see if any of the times are after 2 AM but before 3 Am
-            if datetime.time(1, 50) < time < datetime.time(2, 10):
-                return True
+        return match[1::2]
+    else:
+        return []
 
-    return False
+
+def find_store(text):
+    text = text.replace('\n', ' ')
+
+    # import the store id from the config file
+    store_id = yaml.safe_load(open("config.yml"))["store_id"]
+    for key, value in store_id.items():
+        if value in text.split('-')[0]:
+            return key
+
+
+def find_late_clock_out_employee(text):
+    text = text.replace('\n', ' ')
+    # regular expression to find the string between ID and Date in the example string below
+    # Name  Payroll ID  Banks, DJ  8846  Date  Job  Time
+    pattern = r"ID\s+(.*?)\s+Date"
+    match = re.search(pattern, text)
+    if match:
+        return match.group(1).replace('  ', ' ').strip()
 
 
 def find_over_short(text):
