@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "chc_automation"
+version = "0.1.0"
+description = "A tool to automate the summarizing reports for CHC"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+# pyyaml
+pyyaml = "^5.4.1"
+# sendgrid
+sendgrid = "^6.7.0"
+# boto3
+boto3 = "^1.17.0"
+# python dotenv
+python-dotenv = "^0.15.0"
+# sqlite3
+sqlite3 = "^2.6.0"
+#pdftotext (Note this package requires additional dependencies
+# See: https://github.com/jalan/pdftotext#os-dependencies)
+pdftotext = "^2.2.2"
