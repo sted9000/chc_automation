@@ -85,23 +85,34 @@ def find_late_clock_out_employee(text):
         return match.group(1).replace('  ', ' ').strip()
 
 
+#
+#     # remove the dollar sign
+#     text = text.replace('$', '')
+#     # convert to float (notice that negative numbers have () around them)
+#     if '(' in text:
+#         return float(text.replace('(', '').replace(')', '')) * -1
+#     else:
+#         print(text)
+#         print(f'text is not negative: {text}')
+#         return float(text)
+#
+
 def find_over_short(text):
     text = text.replace('\n', ' ')
-    # All text before 'Grand Total'
-    text = text.split('Grand Total')[0]
-    # remove whitespace
-    text = text.strip()
-    # split the string into a list of items
-    text = text.split(' ')
-    # grab the last item in the list
-    text = text[-1]
-    # remove the dollar sign
-    text = text.replace('$', '')
-    # convert to float (notice that negative numbers have () around them)
-    if '(' in text:
-        return float(text.replace('(', '').replace(')', '')) * -1
-    else:
-        return float(text)
+    # regular expression to find the string before 'Page'
+    # the string can contain parentheses, dollar signs, periods, and numbers
+    # example string: ($0.79) Page 1 of 4
+    pattern = r"(\(?\$?[\d.]+\)?)(?=\s+Page)"
+    match = re.search(pattern, text)
+    if match:
+        text = match.group(1)
+        # remove the dollar sign
+        text = text.replace('$', '')
+        # convert to float (notice that negative numbers have () around them)
+        if '(' in text:
+            return float(text.replace('(', '').replace(')', '')) * -1
+        else:
+            return float(text)
 
 
 def find_lane_total_2(text):

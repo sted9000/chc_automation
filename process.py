@@ -63,7 +63,7 @@ def process_sales(download, date):
 def process_till_history(download, date):
     # open the pdf
     with open(download, "rb") as f:
-        pdf = pdftotext.PDF(f)
+        pdf = pdftotext.PDF(f, physical=True)
 
     # page of the pdf to parse for each store
     till_history_page = yaml.safe_load(open("config.yml"))["till_history_page"]
@@ -76,7 +76,7 @@ def process_till_history(download, date):
         # over/short
         over_short = find_over_short(pdf[value])
         cursor.execute('''
-            INSERT INTO sales (store, metric, value, date)
+            INSERT INTO till_history (store, metric, value, date)
             VALUES (?, ?, ?, ?)
             ''', (key, 'over_short', over_short, date))
 
