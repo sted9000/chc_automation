@@ -16,11 +16,12 @@ yesterday_obj = datetime.datetime.now() - datetime.timedelta(days=1)
 yesterday = yesterday_obj.strftime("%Y-%m-%d")
 
 
-def download_s3_files(files, date, temp_storage_dir):
+def download_s3_files(file_names, date, temp_storage_dir):
     # Format the files to process
-    files = [f"{x['prefix']}-{date}{x['extension']}" for x in files]
+    files = [f"{x['prefix']}-{date}{x['extension']}" for x in file_names]
 
     # Download each file
+    downloaded = []
     for file in files:
 
         # Set a place to store the file temporarily
@@ -30,10 +31,13 @@ def download_s3_files(files, date, temp_storage_dir):
         try:
             s3 = boto3.client('s3')
             s3.download_file(os.getenv("S3_BUCKET"), file, local_path)
+            downloaded.append(file)
             print(f'Downloaded {file}')
         except Exception as e:
             print(f'File not found {file}')
             continue
+
+    return downloaded
 
 
 def check_db(db_path):
@@ -43,37 +47,31 @@ def check_db(db_path):
         create_database()
 
 
-def process_downloaded_files(temp_storage_dir):
-    # get the file names from data_dir
-    downloads = os.listdir(temp_storage_dir)
-
+def process_downloaded_files(files, temp_storage_dir):
     # Process each file
-    for download in downloads:
+    for file in files:
 
         # Set the path
-        download = os.path.join(temp_storage_dir, download)
+        file = os.path.join(temp_storage_dir, file)
 
         # Open, parse and insert the values into the database
-        if 'hme' in download:
-            process_hme(download, yesterday)
-        elif 'jolt' in download:
-            process_jolt(download, yesterday)
-        elif 'sales' in download:
-            process_sales(download, yesterday)
-        elif 'timecard' in download:
-            process_timecard(download, yesterday)
-        elif 'till-history' in download:
-            process_till_history(download, yesterday)
+        if 'hme' in file:
+            process_hme(file, yesterday)
+        elif 'jolt' in file:
+            process_jolt(file, yesterday)
+        elif 'sales' in file:
+            process_sales(file, yesterday)
+        elif 'timecard' in file:
+            process_timecard(file, yesterday)
+        elif 'till-history' in file:
+            process_till_history(file, yesterday)
 
 
-def delete_downloaded_files(temp_storage_dir):
-    # get the file names from data_dir
-    downloads = os.listdir(temp_storage_dir)
-
+def delete_downloaded_files(files, temp_storage_dir):
     # Delete each file
-    for download in downloads:
+    for file in files:
         # Set the path
-        download = os.path.join(temp_storage_dir, download)
+        download = os.path.join(temp_storage_dir, file)
         # Delete the file
         os.remove(download)
 
@@ -87,7 +85,7 @@ def query_db():
     cursor.execute(f"SELECT * FROM sales WHERE date = '{yesterday}'")
     sales = cursor.fetchall()
     cursor.execute(f"SELECT * FROM till_history WHERE date = '{yesterday}'")
-    till_history = cursor.fetchall()
+    till = cursor.fetchall()
     cursor.execute(f"SELECT * FROM timecard WHERE date = '{yesterday}'")
     timecard = cursor.fetchall()
     cursor.execute(f"SELECT * FROM jolt WHERE date = '{yesterday}'")
@@ -95,20 +93,36 @@ def query_db():
     cursor.execute(f"SELECT * FROM hme WHERE date = '{yesterday}'")
     hme = cursor.fetchall()
 
+    # Close the connection
+    conn.close()
+
+    return {'sales': sales, 'till': till, 'timecard': timecard, 'jolt': jolt, 'hme': hme}
+
+
+def format_queries(query_results):
+
+    sales = query_results['sales']
+    till = query_results['till']
+    timecard = query_results['timecard']
+    jolt = query_results['jolt']
+    hme = query_results['hme']
+
     """Format Query Results"""
     # sales
     sales_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
     for index, store, metric, value, date, created_at in sales:
         sales_dict[store][metric] = value
 
-    # till_history
-    till_history_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
-    for index, store, metric, value, date, created_at in till_history:
-        till_history_dict[store][metric] = value
+    # till
+    till_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
+    for index, store, metric, value, date, created_at in till:
+        till_dict[store][metric] = value
 
     # timecard
     timecard_dict = {'ek': 0, 'bw': 0, 'sd': 0, 'vr': 0}
+    print(f'timecard: {timecard}')
     for index, store, employee, time, date, created_at in timecard:
+        print(f'store: {store}')
         timecard_dict[store] += 1
 
     # jolt
@@ -124,38 +138,33 @@ def query_db():
             value = str(datetime.timedelta(seconds=value))
         hme_dict[store][metric] = value
 
-    # Close the connection
-    conn.close()
-
-    return {'sales': sales_dict, 'till_history': till_history_dict, 'timecard': timecard_dict, 'jolt': jolt_dict, 'hme': hme_dict}
+    return {'sales': sales_dict, 'till': till_dict, 'timecard': timecard_dict, 'jolt': jolt_dict, 'hme': hme_dict}
 
 
-def set_computed_values(data_dict):
-    """Computed values"""
-    cmpd_dict = {'donation_rate': {}, 'customer_count': 0, 'sales': 0}
+def format_html(queries):
 
+    # first format the queries into a dictionary
+    formatted_queries = format_queries(queries)
+
+    # computed values from the queries
     # compute donation rate
-    for store in data_dict['sales'].keys():
-        donation_rate = data_dict['sales'][store]['donation_count'] / data_dict['sales'][store]['customer_count']
-        cmpd_dict['donation_rate'][store] = "{:.0%}".format(donation_rate)
+    donation_rate = {'ek': 0, 'bw': 0, 'sd': 0, 'vr': 0}
+    for store in formatted_queries['sales'].keys():
+        rate = formatted_queries['sales'][store]['donation_count'] / formatted_queries['sales'][store]['customer_count']
+        donation_rate[store] = "{:.0%}".format(rate)
 
     # combined sales for all the stores
-    cmpd_dict['sales'] = 0
-    for store in data_dict['sales'].keys():
-        sales = data_dict['sales'][store]['net_sales']
-        cmpd_dict['sales'] += sales
+    combined_sales = 0
+    for store in formatted_queries['sales'].keys():
+        combined_sales += formatted_queries['sales'][store]['net_sales']
     # format dollars with two decimal places
-    cmpd_dict['sales'] = float("{:.2f}".format(cmpd_dict['sales']))
+    combined_sales = float("{:.2f}".format(combined_sales))
 
     # total for customer count for all stores
-    cmpd_dict['customer_count'] = 0
-    for store in data_dict['sales'].keys():
-        cmpd_dict['customer_count'] += data_dict['sales'][store]['customer_count']
+    combined_customer_count = 0
+    for store in formatted_queries['sales'].keys():
+        combined_customer_count += formatted_queries['sales'][store]['customer_count']
 
-    return cmpd_dict
-
-
-def format_html(db, computed):
     # Set styles
     styles = {
         'table': 'style="border-collapse: collapse; width: 100%;"',
@@ -177,66 +186,66 @@ def format_html(db, computed):
             "                <th {styles[th]}>Jolt Complete (%)</th>\n"
             "                <th {styles[th]}>HME Average (mm:ss)</th>\n"
             "                <th {styles[th]}>Donation (%)</th>\n"
-            "                <th {styles[th]}>Late Clock Outs (#)</th>\n"
+            # "                <th {styles[th]}>Late Clock Outs (#)</th>\n"
             "            </tr>\n"
             "        </thead>\n"
             "        <tbody>\n"
             "            <tr>\n"
             "                <th {styles[th]}>BW</th>\n"
-            "                <td {styles[td]}>{db[sales][bw][net_sales]}</td>\n"
-            "                <td {styles[td]}>{db[sales][bw][customer_count]}</td>\n"
-            "                <td {styles[td]}>{db[sales][bw][labor]}</td>\n"
-            "                <td {styles[td]}>{db[sales][bw][sales_labor]}</td>\n"
-            "                <td {styles[td]}>{db[till_history][bw][over_short]}</td>\n"
-            "                <td {styles[td]}>{db[jolt][bw][complete]}</td>\n"
-            "                <td {styles[td]}>{db[hme][bw][ave_time]}</td>\n"
-            "                <td {styles[td]}>{computed[donation_rate][bw]}</td>\n"
-            "                <td {styles[td]}>{db[timecard][bw]}</td>\n"
+            "                <td {styles[td]}>{sales[bw][net_sales]}</td>\n"
+            "                <td {styles[td]}>{sales[bw][customer_count]}</td>\n"
+            "                <td {styles[td]}>{sales[bw][labor]}</td>\n"
+            "                <td {styles[td]}>{sales[bw][sales_labor]}</td>\n"
+            "                <td {styles[td]}>{till[bw][over_short]}</td>\n"
+            "                <td {styles[td]}>{jolt[bw][complete]}</td>\n"
+            "                <td {styles[td]}>{hme[bw][ave_time]}</td>\n"
+            "                <td {styles[td]}>{donation_rate[bw]}</td>\n"
+            # "                <td {styles[td]}>{timecard[bw]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>SD</th>\n"
-            "                <td {styles[td]}>{db[sales][sd][net_sales]}</td>\n"
-            "                <td {styles[td]}>{db[sales][sd][customer_count]}</td>\n"
-            "                <td {styles[td]}>{db[sales][sd][labor]}</td>\n"
-            "                <td {styles[td]}>{db[sales][sd][sales_labor]}</td>\n"
-            "                <td {styles[td]}>{db[till_history][sd][over_short]}</td>\n"
-            "                <td {styles[td]}>{db[jolt][sd][complete]}</td>\n"
-            "                <td {styles[td]}>{db[hme][sd][ave_time]}</td>\n"
-            "                <td {styles[td]}>{computed[donation_rate][sd]}</td>\n"
-            "                <td {styles[td]}>{db[timecard][sd]}</td>\n"
+            "                <td {styles[td]}>{sales[sd][net_sales]}</td>\n"
+            "                <td {styles[td]}>{sales[sd][customer_count]}</td>\n"
+            "                <td {styles[td]}>{sales[sd][labor]}</td>\n"
+            "                <td {styles[td]}>{sales[sd][sales_labor]}</td>\n"
+            "                <td {styles[td]}>{till[sd][over_short]}</td>\n"
+            "                <td {styles[td]}>{jolt[sd][complete]}</td>\n"
+            "                <td {styles[td]}>{hme[sd][ave_time]}</td>\n"
+            "                <td {styles[td]}>{donation_rate[sd]}</td>\n"
+            # "                <td {styles[td]}>{timecard[sd]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>EK</th>\n"
-            "                <td {styles[td]}>{db[sales][ek][net_sales]}</td>\n"
-            "                <td {styles[td]}>{db[sales][ek][customer_count]}</td>\n"
-            "                <td {styles[td]}>{db[sales][ek][labor]}</td>\n"
-            "                <td {styles[td]}>{db[sales][ek][sales_labor]}</td>\n"
-            "                <td {styles[td]}>{db[till_history][ek][over_short]}</td>\n"
-            "                <td {styles[td]}>{db[jolt][ek][complete]}</td>\n"
-            "                <td {styles[td]}>{db[hme][ek][ave_time]}</td>\n"
-            "                <td {styles[td]}>{computed[donation_rate][ek]}</td>\n"
-            "                <td {styles[td]}>{db[timecard][ek]}</td>\n"
+            "                <td {styles[td]}>{sales[ek][net_sales]}</td>\n"
+            "                <td {styles[td]}>{sales[ek][customer_count]}</td>\n"
+            "                <td {styles[td]}>{sales[ek][labor]}</td>\n"
+            "                <td {styles[td]}>{sales[ek][sales_labor]}</td>\n"
+            "                <td {styles[td]}>{till[ek][over_short]}</td>\n"
+            "                <td {styles[td]}>{jolt[ek][complete]}</td>\n"
+            "                <td {styles[td]}>{hme[ek][ave_time]}</td>\n"
+            "                <td {styles[td]}>{donation_rate[ek]}</td>\n"
+            # "                <td {styles[td]}>{timecard[ek]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>VR</th>\n"
-            "                <td {styles[td]}>{db[sales][vr][net_sales]}</td>\n"
-            "                <td {styles[td]}>{db[sales][vr][customer_count]}</td>\n"
-            "                <td {styles[td]}>{db[sales][vr][labor]}</td>\n"
-            "                <td {styles[td]}>{db[sales][vr][sales_labor]}</td>\n"
-            "                <td {styles[td]}>{db[till_history][vr][over_short]}</td>\n"
-            "                <td {styles[td]}>{db[jolt][vr][complete]}</td>\n"
-            "                <td {styles[td]}>{db[hme][vr][ave_time]}</td>\n"
-            "                <td {styles[td]}>{computed[donation_rate][vr]}</td>\n"
-            "                <td {styles[td]}>{db[timecard][vr]}</td>\n"
+            "                <td {styles[td]}>{sales[vr][net_sales]}</td>\n"
+            "                <td {styles[td]}>{sales[vr][customer_count]}</td>\n"
+            "                <td {styles[td]}>{sales[vr][labor]}</td>\n"
+            "                <td {styles[td]}>{sales[vr][sales_labor]}</td>\n"
+            "                <td {styles[td]}>{till[vr][over_short]}</td>\n"
+            "                <td {styles[td]}>{jolt[vr][complete]}</td>\n"
+            "                <td {styles[td]}>{hme[vr][ave_time]}</td>\n"
+            "                <td {styles[td]}>{donation_rate[vr]}</td>\n"
+            # "                <td {styles[td]}>{timecard[vr]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>Total</th>\n"
-            "                <td {styles[td]}>{computed[sales]}</td>\n"
-            "                <td {styles[td]}>{computed[customer_count]}</td>\n"
+            "                <td {styles[td]}>{combined_sales}</td>\n"
+            "                <td {styles[td]}>{combined_customer_count}</td>\n"
             "            </td>\n"
             "        </tbody>\n"
             "    </table>\n"
-            "    ").format(styles=styles, db=db, computed=computed)
+            "    ").format(styles=styles, sales=formatted_queries['sales'], till=formatted_queries['till'], timecard=formatted_queries['timecard'], jolt=formatted_queries['jolt'], hme=formatted_queries['hme'], donation_rate=donation_rate, combined_sales=combined_sales, combined_customer_count=combined_customer_count)
 
     return html
 
@@ -260,12 +269,23 @@ def send_email(html_content):
 
 
 if __name__ == "__main__":
-    download_s3_files(files_to_process, yesterday, data_dir)
+    downloads = download_s3_files(files_to_process, yesterday, data_dir)
     check_db('db.db')
-    process_downloaded_files(data_dir)
-    delete_downloaded_files(data_dir)
-    db_dict = query_db()
-    computed_dict = set_computed_values(db_dict)
-    email_body = format_html(db_dict, computed_dict)
-    send_email(email_body)
+    process_downloaded_files(downloads, data_dir)
+    delete_downloaded_files(downloads, data_dir)
 
+    # check to see if all the desired files were downloaded and processed
+    if len(downloads) != len(files_to_process):
+        email_body = f'Not all files were downloaded and processed.\n\nThe following files were not processed ' \
+                        f'correctly:\n'
+        for file in files_to_process:
+            if file['prefix'] not in downloads:
+                email_body += f"{file['prefix']}-{yesterday}{file['extension']}\n"
+        # add my name to the end of the message
+        email_body += '\n\n--\n\nThis message was sent by the CHC Daily Report Bot.'
+        send_email(email_body)
+
+    else:
+        queries = query_db()
+        email_body = format_html(queries)
+        send_email(email_body)
