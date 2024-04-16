@@ -6,7 +6,7 @@ Workflow to automate converting service provider's reports into a daily summary 
 
 ## General
 ### Problem
-Many small and medium-sized businesses use third party services handles various aspects of their business. These services often provide daily reports that are useful for the business owner to monitor the health of their business. However, these reports are often in a format that is not easily consumable. Often the business owner must manually review multi-page reports to extract the a single piece of relevant information.
+Many small and medium-sized businesses use third party services handles various aspects of their business. These services often provide daily reports that are useful for the business owner to monitor the health of their business. However, these reports are typically in a format that is not easily consumable -- leaving the business owner to sift through multiple pages to extract a single piece of relevant information.
 ### Solution
 Automate the process of extracting the relevant information from the reports and sending a daily summary email to the business owner.
 
