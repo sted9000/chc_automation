@@ -1,7 +1,6 @@
 """Parsing with REGEX"""
 import datetime
 import re
-
 import yaml
 
 
@@ -11,7 +10,10 @@ def find_net_sales(text):
     pattern = r"Net Sales\s+\$([\d,]+\.\d\d)"
     match = re.search(pattern, text)
     if match:
-        return float(match.group(1).replace(",", ""))
+        if ',' in match.group(1):
+            return float(match.group(1).replace(",", ""))
+        else:
+            return float(match.group(1))
 
 
 def find_customer_count(text):
@@ -48,6 +50,17 @@ def find_donation_count(text):
     match = re.search(pattern, text)
     if match:
         return int(match.group(1))
+
+
+def find_refunds(text):
+    # regular expression to find the customer count in the example string below
+    # $0.00  Refunds  $0.00  Gift Card Issue Count:
+    pattern = r"Refunds\s+\$([\d.]+)"
+    match = re.search(pattern, text)
+    # print(text)
+    print(match)
+    if match:
+        return float(match.group(1))
 
 
 def find_clock_out_times(text):

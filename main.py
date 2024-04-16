@@ -4,28 +4,45 @@ import sqlite3
 import boto3
 import yaml
 from dotenv import load_dotenv
-from sendgrid import SendGridAPIClient, Mail
-from process import process_hme, process_jolt, process_sales, process_timecard, process_till_history
+from sendgrid import SendGridAPIClient, Mail, To
+from process import process_hme, process_jolt, process_sales, process_till, process_timecard
 from utils import create_database
 
 load_dotenv()
 config = yaml.safe_load(open("config.yml"))
-files_to_process = config['files_to_process']
+db_path = config['db_path']
+stores = list(config['stores'].keys())
+reports = config['reports']
 data_dir = config['data_dir']
 yesterday_obj = datetime.datetime.now() - datetime.timedelta(days=1)
 yesterday = yesterday_obj.strftime("%Y-%m-%d")
 
 
-def download_s3_files(file_names, date, temp_storage_dir):
-    # Format the files to process
-    files = [f"{x['prefix']}-{date}{x['extension']}" for x in file_names]
+def download_s3_files():
+
+    files_to_download = []
+
+    # the keys of the reports dictionary are the names of the reports
+    for report in reports.keys():
+
+        # check that the reports are enabled
+        if reports[report]['enabled']:
+
+            # some reports are per store, some are not
+            if reports[report]['per_store']:
+                for store in stores:
+                    files_to_download.append(f'{reports[report]["filename"]}-{store}-{yesterday}{reports[report]["file_extension"]}')
+            else:
+                files_to_download.append(f'{reports[report]["filename"]}-{yesterday}{reports[report]["file_extension"]}')
+
+    downloaded = []
+    failed = []
 
     # Download each file
-    downloaded = []
-    for file in files:
+    for file in files_to_download:
 
         # Set a place to store the file temporarily
-        local_path = os.path.join(temp_storage_dir, file)
+        local_path = os.path.join(data_dir, file)
 
         # Download the file from S3
         try:
@@ -34,25 +51,27 @@ def download_s3_files(file_names, date, temp_storage_dir):
             downloaded.append(file)
             print(f'Downloaded {file}')
         except Exception as e:
-            print(f'File not found {file}')
+            print(f'Failed to download {file}')
+            print(e)
+            failed.append(file)
             continue
 
-    return downloaded
+    return downloaded, failed
 
 
-def check_db(db_path):
+def check_db():
     # Check if the database exists
     if not os.path.exists(db_path):
         # Create the database
         create_database()
 
 
-def process_downloaded_files(files, temp_storage_dir):
+def process_downloaded_files(files_to_process):
     # Process each file
-    for file in files:
+    for file in files_to_process:
 
         # Set the path
-        file = os.path.join(temp_storage_dir, file)
+        file = os.path.join(data_dir, file)
 
         # Open, parse and insert the values into the database
         if 'hme' in file:
@@ -63,108 +82,110 @@ def process_downloaded_files(files, temp_storage_dir):
             process_sales(file, yesterday)
         elif 'timecard' in file:
             process_timecard(file, yesterday)
-        elif 'till-history' in file:
-            process_till_history(file, yesterday)
+        elif 'till' in file:
+            process_till(file, yesterday)
 
 
-def delete_downloaded_files(files, temp_storage_dir):
+def delete_downloaded_files(files_to_delete):
     # Delete each file
-    for file in files:
-        # Set the path
-        download = os.path.join(temp_storage_dir, file)
+    for file in files_to_delete:
         # Delete the file
-        os.remove(download)
+        os.remove(os.path.join(data_dir, file))
 
 
 def query_db():
+    # Dictionary to store the query results
+    results = {}
+
     # Connect to the database
     conn = sqlite3.connect('db.db')
     cursor = conn.cursor()
 
-    """Query the database"""
-    cursor.execute(f"SELECT * FROM sales WHERE date = '{yesterday}'")
-    sales = cursor.fetchall()
-    cursor.execute(f"SELECT * FROM till_history WHERE date = '{yesterday}'")
-    till = cursor.fetchall()
-    cursor.execute(f"SELECT * FROM timecard WHERE date = '{yesterday}'")
-    timecard = cursor.fetchall()
-    cursor.execute(f"SELECT * FROM jolt WHERE date = '{yesterday}'")
-    jolt = cursor.fetchall()
-    cursor.execute(f"SELECT * FROM hme WHERE date = '{yesterday}'")
-    hme = cursor.fetchall()
+    """Query database for yesterday's data"""
+    for report in reports.keys():
+        # report is enabled
+        if reports[report]['enabled']:
+            if report not in results:
+                results[report] = {}
+            for store in stores:
+                if store not in results[report]:
+                    results[report][store] = {}
+                for metric in reports[report]['metrics']:
+                    cursor.execute(
+                        f"SELECT * FROM {report} WHERE date = '{yesterday}' AND store = '{store}' AND metric = '{metric}'")
+                    result = cursor.fetchone()
+                    if metric == 'refunds':
+                        print(f'refunds: {result} store: {store}')
+                    if result is None:
+                        results[report][store][metric] = None
+                    else:
+                        results[report][store][metric] = result[3]
 
     # Close the connection
     conn.close()
 
-    return {'sales': sales, 'till': till, 'timecard': timecard, 'jolt': jolt, 'hme': hme}
+    return results
 
 
-def format_queries(query_results):
+def compute_metrics():
 
-    sales = query_results['sales']
-    till = query_results['till']
-    timecard = query_results['timecard']
-    jolt = query_results['jolt']
-    hme = query_results['hme']
-
-    """Format Query Results"""
-    # sales
-    sales_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
-    for index, store, metric, value, date, created_at in sales:
-        sales_dict[store][metric] = value
-
-    # till
-    till_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
-    for index, store, metric, value, date, created_at in till:
-        till_dict[store][metric] = value
-
-    # timecard
-    timecard_dict = {'ek': 0, 'bw': 0, 'sd': 0, 'vr': 0}
-    print(f'timecard: {timecard}')
-    for index, store, employee, time, date, created_at in timecard:
-        print(f'store: {store}')
-        timecard_dict[store] += 1
-
-    # jolt
-    jolt_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
-    for index, store, metric, value, date, created_at in jolt:
-        jolt_dict[store][metric] = value
-
-    # hme
-    hme_dict = {'ek': {}, 'bw': {}, 'sd': {}, 'vr': {}}
-    for index, store, metric, value, date, created_at in hme:
-        # format seconds to minutes and seconds (mm:ss)
-        if metric == 'ave_time':
-            value = str(datetime.timedelta(seconds=value))
-        hme_dict[store][metric] = value
-
-    return {'sales': sales_dict, 'till': till_dict, 'timecard': timecard_dict, 'jolt': jolt_dict, 'hme': hme_dict}
-
-
-def format_html(queries):
-
-    # first format the queries into a dictionary
-    formatted_queries = format_queries(queries)
-
-    # computed values from the queries
     # compute donation rate
     donation_rate = {'ek': 0, 'bw': 0, 'sd': 0, 'vr': 0}
-    for store in formatted_queries['sales'].keys():
-        rate = formatted_queries['sales'][store]['donation_count'] / formatted_queries['sales'][store]['customer_count']
-        donation_rate[store] = "{:.0%}".format(rate)
+    for store in queries['sales'].keys():
+        # make sure there are no division by zero errors
+        if queries['sales'][store]['customer_count'] == 0:
+            donation_rate[store] = 0
+        # make sure none of the values are None
+        elif None in [queries['sales'][store]['donation_count'],
+                      queries['sales'][store]['customer_count']]:
+            donation_rate[store] = None
+        else:
+            rate = queries['sales'][store]['donation_count'] / queries['sales'][store][
+                'customer_count']
+            donation_rate[store] = "{:.0%}".format(rate)
 
     # combined sales for all the stores
     combined_sales = 0
-    for store in formatted_queries['sales'].keys():
-        combined_sales += formatted_queries['sales'][store]['net_sales']
-    # format dollars with two decimal places
-    combined_sales = float("{:.2f}".format(combined_sales))
+    for store in queries['sales'].keys():
+        # make sure none of the values are None
+        if queries['sales'][store]['net_sales'] is None:
+            combined_sales = None
+            break
+
+        combined_sales += queries['sales'][store]['net_sales']
+        # format dollars with two decimal places
+        combined_sales = float("{:.2f}".format(combined_sales))
 
     # total for customer count for all stores
     combined_customer_count = 0
-    for store in formatted_queries['sales'].keys():
-        combined_customer_count += formatted_queries['sales'][store]['customer_count']
+    for store in queries['sales'].keys():
+        # make sure none of the values are '?'
+        if queries['sales'][store]['customer_count'] is None:
+            combined_customer_count = None
+            break
+        combined_customer_count += queries['sales'][store]['customer_count']
 
+    # format hme from seconds to mm:ss
+    for store in queries['hme'].keys():
+        if queries['hme'][store]['ave_time'] is None:
+            queries['hme'][store]['ave_time'] = None
+        else:
+            queries['hme'][store]['ave_time'] = str(datetime.timedelta(seconds=queries['hme'][store]['ave_time']))
+
+    return {'donation_rate': donation_rate, 'combined_sales': combined_sales,
+            'combined_customer_count': combined_customer_count}
+
+
+def create_error_message(error_items):
+    message = ''
+    if len(error_items) > 0:
+        message += 'The following files were not processed correctly:\n'
+        for file in error_items:
+            message += f'{file}\n'
+    return message
+
+
+def format_html(error_msg):
     # Set styles
     styles = {
         'table': 'style="border-collapse: collapse; width: 100%;"',
@@ -186,6 +207,7 @@ def format_html(queries):
             "                <th {styles[th]}>Jolt Complete (%)</th>\n"
             "                <th {styles[th]}>HME Average (mm:ss)</th>\n"
             "                <th {styles[th]}>Donation (%)</th>\n"
+            "                <th {styles[th]}>Refunds ($)</th>\n"
             # "                <th {styles[th]}>Late Clock Outs (#)</th>\n"
             "            </tr>\n"
             "        </thead>\n"
@@ -200,7 +222,8 @@ def format_html(queries):
             "                <td {styles[td]}>{jolt[bw][complete]}</td>\n"
             "                <td {styles[td]}>{hme[bw][ave_time]}</td>\n"
             "                <td {styles[td]}>{donation_rate[bw]}</td>\n"
-            # "                <td {styles[td]}>{timecard[bw]}</td>\n"
+            "                <td {styles[td]}>{sales[bw][refunds]}</td>\n"
+            #             "                <td {styles[td]}>{timecard[bw]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>SD</th>\n"
@@ -212,7 +235,8 @@ def format_html(queries):
             "                <td {styles[td]}>{jolt[sd][complete]}</td>\n"
             "                <td {styles[td]}>{hme[sd][ave_time]}</td>\n"
             "                <td {styles[td]}>{donation_rate[sd]}</td>\n"
-            # "                <td {styles[td]}>{timecard[sd]}</td>\n"
+            "                <td {styles[td]}>{sales[sd][refunds]}</td>\n"
+            #             "                <td {styles[td]}>{timecard[sd]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>EK</th>\n"
@@ -224,7 +248,8 @@ def format_html(queries):
             "                <td {styles[td]}>{jolt[ek][complete]}</td>\n"
             "                <td {styles[td]}>{hme[ek][ave_time]}</td>\n"
             "                <td {styles[td]}>{donation_rate[ek]}</td>\n"
-            # "                <td {styles[td]}>{timecard[ek]}</td>\n"
+            "                <td {styles[td]}>{sales[ek][refunds]}</td>\n"
+            #             "                <td {styles[td]}>{timecard[ek]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>VR</th>\n"
@@ -236,7 +261,8 @@ def format_html(queries):
             "                <td {styles[td]}>{jolt[vr][complete]}</td>\n"
             "                <td {styles[td]}>{hme[vr][ave_time]}</td>\n"
             "                <td {styles[td]}>{donation_rate[vr]}</td>\n"
-            # "                <td {styles[td]}>{timecard[vr]}</td>\n"
+            "                <td {styles[td]}>{sales[vr][refunds]}</td>\n"
+            #             "                <td {styles[td]}>{timecard[vr]}</td>\n"
             "            </tr>\n"
             "            <tr>\n"
             "                <th {styles[th]}>Total</th>\n"
@@ -245,7 +271,19 @@ def format_html(queries):
             "            </td>\n"
             "        </tbody>\n"
             "    </table>\n"
-            "    ").format(styles=styles, sales=formatted_queries['sales'], till=formatted_queries['till'], timecard=formatted_queries['timecard'], jolt=formatted_queries['jolt'], hme=formatted_queries['hme'], donation_rate=donation_rate, combined_sales=combined_sales, combined_customer_count=combined_customer_count)
+            "\n"
+            "\n"
+            "<p>{errorMsg}</p>\n"
+            "\n"
+            "\n"
+            "<p>These figures are for {yesterday}</p>\n"
+            "<p>Processed by CHC Daily Report Bot</p>\n"
+            "<p>Thank you, Come again</p>\n"
+            "    ").format(styles=styles, sales=queries['sales'], till=queries['till'], jolt=queries['jolt'],
+                           hme=queries['hme'], donation_rate=computed_metrics['donation_rate'],
+                           combined_sales=computed_metrics['combined_sales'],
+                           combined_customer_count=computed_metrics['combined_customer_count'], errorMsg=error_msg,
+                           yesterday=yesterday_obj.strftime("%b %d, %Y"))
 
     return html
 
@@ -254,7 +292,7 @@ def send_email(html_content):
     # Send email
     message = Mail(
         from_email=os.getenv("SENDGRID_EMAIL"),
-        to_emails=os.getenv("CLIENT_EMAIL"),
+        to_emails=[To(os.getenv("CLIENT_EMAIL")), To(os.getenv("SENDGRID_EMAIL"))],
         subject=f'CHC Daily Report -- {yesterday_obj.strftime("%b %d, %Y")}',
         html_content=html_content
     )
@@ -265,27 +303,36 @@ def send_email(html_content):
         print(response.body)
         print(response.headers)
     except Exception as e:
-        print(e.message)
+        print(e)
 
 
 if __name__ == "__main__":
-    downloads = download_s3_files(files_to_process, yesterday, data_dir)
-    check_db('db.db')
-    process_downloaded_files(downloads, data_dir)
-    delete_downloaded_files(downloads, data_dir)
 
-    # check to see if all the desired files were downloaded and processed
-    if len(downloads) != len(files_to_process):
-        email_body = f'Not all files were downloaded and processed.\n\nThe following files were not processed ' \
-                        f'correctly:\n'
-        for file in files_to_process:
-            if file['prefix'] not in downloads:
-                email_body += f"{file['prefix']}-{yesterday}{file['extension']}\n"
-        # add my name to the end of the message
-        email_body += '\n\n--\n\nThis message was sent by the CHC Daily Report Bot.'
-        send_email(email_body)
+    # download the files from s3
+    downloads, failed_downloads = download_s3_files()
 
-    else:
-        queries = query_db()
-        email_body = format_html(queries)
-        send_email(email_body)
+    # check to see if the database exists
+    check_db()
+
+    # process the downloaded files
+    process_downloaded_files(downloads)
+
+    # delete the downloaded files
+    delete_downloaded_files(downloads)
+
+    # query the database
+    queries = query_db()
+
+    # computed metrics
+    computed_metrics = compute_metrics()
+
+    # error message
+    error_message = create_error_message(failed_downloads)
+
+    # format the html
+    email_body = format_html(error_message)
+
+    print(email_body)
+    #
+    # # send the email
+    # send_email(email_body)

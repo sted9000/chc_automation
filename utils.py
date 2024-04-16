@@ -69,7 +69,7 @@ def create_database():
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     
-    CREATE TABLE IF NOT EXISTS till_history (
+    CREATE TABLE IF NOT EXISTS till (
         id INTEGER PRIMARY KEY,
         store TEXT NOT NULL,
         metric TEXT NOT NULL,

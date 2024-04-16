@@ -1,43 +1,49 @@
 # CHC Automation
-## Warning
-This is a work in progress. Use at your own risk.
+
+
+## Description
+Workflow to automate converting service provider's reports into a daily summary email for a small business.
 
 ## General
-Python script to automate the process of downloading and parsing reports from vendors. Webhook to initiate the process is currently not set up. The webhook will include a file name to download, parse, and store in the local sqlite database. A cron job will be set up to run ```fetch_and_send.py``` every day at 5am to email a summary report to the client.
+### Problem
+Many small and medium-sized businesses use third party services handles various aspects of their business. These services often provide daily reports that are useful for the business owner to monitor the health of their business. However, these reports are often in a format that is not easily consumable. Often the business owner must manually review multi-page reports to extract the a single piece of relevant information.
+### Solution
+Automate the process of extracting the relevant information from the reports and sending a daily summary email to the business owner.
 
-## Configuration File
-Create a config.yml file in the root directory with the following format:
-```yaml
-# config.yml
-sales_summary:
-  ek: <PAGE_NUMBER_OF_EK_REPORT>
-  bw: <PAGE_NUMBER_OF_BW_REPORT>
-  sd: <PAGE_NUMBER_OF_SD_REPORT>
-  vr: <PAGE_NUMBER_OF_VR_REPORT>
+## Workflow
+1. Capture third party provider's daily reports sent to client via email (Zapier)
+1. Store the reports (ActivePieces, AWS S3)
+1. Parse the reports to extract the relevant information (Python, Raspberry Pi)
+1. Send a daily summary email to the business owner (Sendgrid)
 
-jolt_store_id:
-  ek: '<STORE_ID>'
-  bw: '<STORE_ID>'
-  sd: '<STORE_ID>'
-  vr: '<STORE_ID>'
-```
+## Notes and Learnings
+### Zapier and ActivePieces
+Zapier and the *Go To* for automating workflows. However, it is on the pricier side. ActivePieces is an open-source alternative that can be used to automate workflows. I used ActivePieces for all the pieces that I could, but I had to use Zapier for the email handling because ActivePieces does not handle emails with multiple attachments very well. 
 
-## ENV Variables
-Create a .env file in the root directory with the following format:
+### PDFs
+Most of the third-party reports are in PDF format -- which are not as simple to extract data from as plain text files. After first paying a service to parse the PDFs, I found multiple python libraries to do the trick. In the end, I found [pdftotext](https://pypi.org/project/pdftotext/) to be the best for my use case.
 
-```bash
-# .env
-SENDGRID_API_KEY='<SENDGRID_API_KEY>'
-SENDGRID_EMAIL='<SENDGRID_EMAIL>'
-CLIENT_EMAIL='<CLIENT_EMAIL>'
-S3_BUCKET='<S3_BUCKET>'
-DATA_DIR='<DIRECTORY_TO_STORE_DATA_BEING_PARSED>
-```
+### Storing the Reports
+While storing the reports is not necessary, I chose to do so because the reports contain valuable data that the business owner may want to access later. Additionally, this allowed my to make the workflow more modular and resilient to errors. It's great how cheap and easy to use AWS S3 is for this purpose.
 
-## TODO
-- [x] Add store reference to hme files
-- [x] Add parse timecard
-- [x] Add parse till-history
-- [ ] Update fetch and send with all files
-- [ ] Update format_html with all files
-- [ ] Update README
+### Regex and Copilots
+I used regex to extract the relevant information from the reports once they were turned into strings. In doing so I found my new favorite use case for LLM copilots: Writing Regular Expressions!
+
+### Production
+The main challenge in production was handling the various edge cases that occurred when dealing with third-party vendors. For example, occasionally vendors will not send a report. I had to make sure that the system could handle these cases without crashing or causing the whole system to melt down.
+
+## Recurring Costs
+- Zapier: $30/month
+- ActivePieces: Free Tier
+- AWS S3: $0.023/GB
+- Sendgrid: Free Tier
+
+## Possible Extensions
+- Create weekly and monthly reports
+- Add trends or historical data to the reports
+- Improve error handling and messaging
+- Add charts and graphs to the report$s
+- Host on a cloud server instead of a local server to make more resilient... my niece likes unplugging my raspberry pi
+- Move Zapier functionality to ActivePieces to reduce costs
+- Delete S3 files after processing to reduce storage costs
+- Host ActivePieces locally to reduce costs

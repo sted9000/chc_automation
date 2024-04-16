@@ -2,24 +2,25 @@ import datetime
 import sqlite3
 import pdftotext
 import yaml
-from regex import find_store, find_lane_total_2, find_complete_per, find_net_sales, find_customer_count, \
-    find_over_short, find_labor, find_sales_labor, find_donation_count, find_clock_out_times, \
-    find_late_clock_out_employee
+from regex import find_lane_total_2, find_complete_per, find_net_sales, find_customer_count, \
+    find_over_short, find_labor, find_sales_labor, find_donation_count, find_clock_out_times, find_refunds
 
 
 def process_sales(download, date):
     # open the pdf
     with open(download, "rb") as f:
         pdf = pdftotext.PDF(f)
+        # https: // github.com / jalan / pdftotext / issues / 110
 
     # page of the pdf to parse for each store
-    sales_summary_config = yaml.safe_load(open("config.yml"))["sales_summary"]
+    sales_summary_config = yaml.safe_load(open("config.yml"))["reports"]["sales"]["page_identifiers"]
 
     # connect to database
     conn = sqlite3.connect('db.db')
     cursor = conn.cursor()
 
     for key, value in sales_summary_config.items():
+        print(key, value)
         # net sales
         net_sales = find_net_sales(pdf[value])
         cursor.execute('''
@@ -55,28 +56,39 @@ def process_sales(download, date):
         VALUES (?, ?, ?, ?)
         ''', (key, 'donation_count', donation_count, date))
 
+        # refunds
+        refunds = find_refunds(pdf[value])
+        print(f"refunds: {refunds}, store: {key}")
+        cursor.execute('''
+        INSERT INTO sales (store, metric, value, date)
+        VALUES (?, ?, ?, ?)
+        ''', (key, 'refunds', refunds, date))
+
     # commit and close connection
     conn.commit()
     conn.close()
 
 
-def process_till_history(download, date):
+def process_till(download, date):
+    # print('process_till')
     # open the pdf
     with open(download, "rb") as f:
         pdf = pdftotext.PDF(f, physical=True)
 
     # page of the pdf to parse for each store
-    till_history_page = yaml.safe_load(open("config.yml"))["till_history_page"]
-
+    till_page = yaml.safe_load(open("config.yml"))["reports"]["till"]["page_identifiers"]
+    # print(till_page)
     # connect to database
     conn = sqlite3.connect('db.db')
     cursor = conn.cursor()
 
-    for key, value in till_history_page.items():
+    for key, value in till_page.items():
+        # print(key, value)
         # over/short
         over_short = find_over_short(pdf[value])
+        # print(over_short)
         cursor.execute('''
-            INSERT INTO till_history (store, metric, value, date)
+            INSERT INTO till (store, metric, value, date)
             VALUES (?, ?, ?, ?)
             ''', (key, 'over_short', over_short, date))
 
@@ -176,7 +188,7 @@ def process_jolt(download, date):
     text = (pdf[0].replace("\n", " "))
 
     # jolt store id
-    store_id = yaml.safe_load(open("config.yml"))["jolt_store_id"]
+    store_id = yaml.safe_load(open("config.yml"))["reports"]["jolt"]["page_identifiers"]
 
     # connect to database
     conn = sqlite3.connect('db.db')
@@ -185,6 +197,10 @@ def process_jolt(download, date):
     for key, value in store_id.items():
         # complete %
         complete_per_str = find_complete_per(text, value)
+
+        # break if no complete % found
+        if complete_per_str is None:
+            break
 
         # convert xx.xx% string to float
         complete_per = float(complete_per_str.replace('%', ''))
